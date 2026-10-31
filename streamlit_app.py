@@ -1,96 +1,67 @@
 import streamlit as st
+from transformers import pipeline
 from PIL import Image
-import requests
-import io
 
-st.set_page_config(page_title='Advanced Deepfake Level Inspector', page_icon='📊', layout='centered')
-st.title('Advanced Deepfake Level & Manipulation Inspector')
-st.markdown('Measures exact manipulation percentages and categorizes the risk level of fake media.')
+st.set_page_config(page_title='AI & Real Photo Detector', page_icon='🔍', layout='centered')
+st.title('AI & Real Photo Detector')
+st.markdown('Simple, reliable detection for AI-generated and Real photographs.')
 
-# Public Serverless Inference API (No token required)
-API_URL = 'https://api-inference.huggingface.co/models/dima806/deepfake_vs_real_image_detection'
+@st.cache_resource
+def load_detector():
+    return pipeline('image-classification', model='dima806/deepfake_vs_real_image_detection')
 
-tab1, tab2 = st.tabs(['Photo Forensics', 'Video Forensics'])
+with st.spinner('Initializing detector...'):
+    detector = load_detector()
 
-with tab1:
-    uploaded_file = st.file_uploader('Upload photograph for deepfake level analysis...', type=['jpg', 'jpeg', 'png', 'webp'], key='img_level_notoken')
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file).convert('RGB')
-        st.image(image, caption='Target Image', use_column_width=True)
-        
-        if st.button('Analyze Manipulation Level', type='primary'):
-            with st.spinner('Calculating manipulation risk levels...'):
-                try:
-                    buf = io.BytesIO()
-                    image.save(buf, format='JPEG')
-                    byte_im = buf.getvalue()
-                    
-                    response = requests.post(API_URL, data=byte_im, timeout=30)
-                    
-                    if response.status_code == 200:
-                        res = response.json()
-                        st.markdown('---')
-                        st.subheader('Deepfake Manipulation Level Report')
-                        
-                        if isinstance(res, list) and len(res) > 0:
-                            fake_prob = 0.0
-                            real_prob = 0.0
-                            
-                            for item in res:
-                                lbl = item.get('label', '').lower()
-                                score = float(item.get('score', 0.0)) * 100
-                                if 'fake' in lbl or 'ai' in lbl or 'artificial' in lbl or 'deepfake' in lbl:
-                                    fake_prob = score
-                                else:
-                                    real_prob = score
-                                    
-                            top = max(res, key=lambda x: x.get('score', 0))
-                            top_lbl = top.get('label', 'Unknown').lower()
-                            top_score = float(top.get('score', 0.0)) * 100
-                            
-                            if 'fake' in top_lbl or 'ai' in top_lbl or 'artificial' in top_lbl:
-                                fake_prob = top_score
-                                real_prob = 100.0 - top_score
-                            else:
-                                real_prob = top_score
-                                fake_prob = 100.0 - top_score
-                                
-                            if fake_prob > 80:
-                                risk_level = 'CRITICAL (High-Confidence Deepfake / Fully AI-Generated)'
-                            elif fake_prob > 40:
-                                risk_level = 'MODERATE (Possible Face Manipulation or Partial AI Editing)'
-                            elif fake_prob > 15:
-                                risk_level = 'LOW (Minor Artifacts / Likely Authentic)'
-                            else:
-                                risk_level = 'SAFE (Authentic / Real Photograph)'
-                                
-                            st.metric(label='Calculated Fake / Manipulation Level', value=f'{fake_prob:.2f}%')
-                            st.metric(label='Threat Risk Assessment', value=risk_level)
-                            
-                            st.markdown('### Detailed Manipulation Breakdown and Reason:')
-                            st.markdown(f'- **Fake Probability:** **{fake_prob:.2f}%** likelihood of synthetic or manipulated generation.')
-                            st.markdown(f'- **Real Probability:** **{real_prob:.2f}%** likelihood of authentic optical capture.')
-                            st.markdown(f'- **Forensic Evaluation:** Based on spatial frequency analysis, the image exhibits characteristics consistent with the tier: {risk_level}.')
-                            
-                            with st.expander('View Raw Model Output'):
-                                st.json(res)
-                        else:
-                            st.json(res)
-                    elif response.status_code == 503:
-                        st.info('Model is warming up on Hugging Face servers. Please wait 10 seconds and click Analyze Manipulation Level again.')
+uploaded_file = st.file_uploader('Choose an image...', type=['jpg', 'jpeg', 'png', 'webp'])
+
+if uploaded_file is not None:
+    image = Image.open(uploaded_file).convert('RGB')
+    st.image(image, caption='Uploaded Image', use_column_width=True)
+    
+    if st.button('Analyze Image', type='primary'):
+        with st.spinner('Analyzing...'):
+            try:
+                results = detector(image)
+                
+                ai_score = 0.0
+                real_score = 0.0
+                
+                for item in results:
+                    lbl = item.get('label', '').lower()
+                    score = float(item.get('score', 0.0)) * 100
+                    if 'fake' in lbl or 'ai' in lbl or 'artificial' in lbl or 'deepfake' in lbl:
+                        ai_score = score
                     else:
-                        st.error(f'API Error ({response.status_code}): {response.text}')
-                except Exception as e:
-                    st.error(f'Connection error: {e}')
-
-with tab2:
-    uploaded_video = st.file_uploader('Upload video...', type=['mp4', 'mov', 'avi'], key='vid_level_notoken')
-    if uploaded_video is not None:
-        st.video(uploaded_video)
-        if st.button('Analyze Video Manipulation Level', type='primary'):
-            st.success('Video Manipulation Level Scan Complete')
-            st.metric(label='Calculated Fake / Manipulation Level', value='2.85%')
-            st.metric(label='Threat Risk Assessment', value='SAFE (Authentic Video Stream)')
-            st.markdown('### Detailed Manipulation Breakdown and Reason:')
-            st.markdown('- **Fake Probability:** **2.85%** synthetic frame warping detected.')
-            st.markdown('- **Forensic Evaluation:** Temporal consistency across frames confirms natural movement with 97.15% authenticity.')
+                        real_score = score
+                        
+                if ai_score == 0.0 and real_score == 0.0:
+                    top = max(results, key=lambda x: x.get('score', 0))
+                    top_score = float(top.get('score', 0.0)) * 100
+                    if 'fake' in top.get('label', '').lower() or 'ai' in top.get('label', '').lower():
+                        ai_score = top_score
+                        real_score = 100.0 - top_score
+                    else:
+                        real_score = top_score
+                        ai_score = 100.0 - top_score
+                elif ai_score > 0 and real_score == 0:
+                    real_score = 100.0 - ai_score
+                elif real_score > 0 and ai_score == 0:
+                    ai_score = 100.0 - real_score
+                    
+                st.markdown('---')
+                st.subheader('Results')
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric(label='AI / Deepfake', value=f'{ai_score:.1f}%')
+                with col2:
+                    st.metric(label='Real Photo', value=f'{real_score:.1f}%')
+                    
+                st.markdown('### Verdict:')
+                if ai_score > real_score:
+                    st.error(f'This image is likely **AI-Generated / Deepfake** ({ai_score:.1f}% confidence).')
+                else:
+                    st.success(f'This image is likely a **Real Photograph** ({real_score:.1f}% confidence).')
+            except Exception as e:
+                st.error(f'Error: {e}')
